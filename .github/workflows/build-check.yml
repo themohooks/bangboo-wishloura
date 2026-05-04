@@ -1,14 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# build-check.yml
-#
-# CI workflow: runs on every push to main/develop and on PRs.
-# Verifies the project compiles without producing full release artifacts.
-#
-# Parallel jobs:
-#   • analyze      — Flutter analyze + Dart format check
-#   • test         — Flutter unit tests
-#   • build-android-debug — Quick Android debug build (no signing)
-#   • build-ios-check     — iOS build check (macOS, no signing, no IPA)
+# build-check.yml — CI on every push / PR
+# Repository root IS the flutter project.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build Check
@@ -16,37 +8,26 @@ name: Build Check
 on:
   push:
     branches: [main, develop, "feature/**", "fix/**"]
-    paths:
-      # Only run when relevant files change
-      - "flutter_vpn_go/**"
-      - ".github/workflows/**"
-
   pull_request:
     branches: [main, develop]
-    paths:
-      - "flutter_vpn_go/**"
-      - ".github/workflows/**"
-
   workflow_dispatch:
     inputs:
       skip-ios:
-        description: "Skip iOS build check (saves runner minutes)"
+        description: "Skip iOS build"
         type: boolean
         default: false
 
 concurrency:
-  group: build-check-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ── Flutter analyze ──────────────────────────────────────────────────────────
+  # ── Analyze ────────────────────────────────────────────────────────────────
   analyze:
     name: Analyze & Format
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -55,26 +36,21 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter pub get
-        working-directory: flutter_vpn_go
+      - name: pub get
         run: flutter pub get
 
-      - name: Dart format check
-        working-directory: flutter_vpn_go
+      - name: dart format check
         run: dart format --set-exit-if-changed lib/
 
-      - name: Flutter analyze
-        working-directory: flutter_vpn_go
+      - name: flutter analyze
         run: flutter analyze --no-fatal-infos
 
-  # ── Unit tests ────────────────────────────────────────────────────────────────
+  # ── Unit tests ─────────────────────────────────────────────────────────────
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -83,82 +59,73 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter pub get
-        working-directory: flutter_vpn_go
+      - name: pub get
         run: flutter pub get
 
-      - name: Run tests
-        working-directory: flutter_vpn_go
+      - name: flutter test
         run: flutter test --coverage
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
-        if: ${{ github.event_name != 'pull_request' }}
+        if: github.event_name != 'pull_request'
         with:
-          directory: flutter_vpn_go/coverage/
+          directory: coverage/
           flags: flutter
         continue-on-error: true
 
-  # ── Go vet ────────────────────────────────────────────────────────────────────
+  # ── Go check ───────────────────────────────────────────────────────────────
   go-check:
     name: Go Check
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
-          cache-dependency-path: flutter_vpn_go/go_client/go.sum
+          cache-dependency-path: go_client/go.sum
 
-      - name: Go mod tidy check
-        working-directory: flutter_vpn_go/go_client
+      - name: go mod tidy check
+        working-directory: go_client
         run: |
           go mod tidy
-          if ! git diff --exit-code go.mod go.sum; then
-            echo "❌ go.mod/go.sum not up to date. Run 'go mod tidy'."
+          git diff --exit-code go.mod go.sum || {
+            echo "❌ go.mod or go.sum out of date — run 'go mod tidy'"
             exit 1
-          fi
+          }
 
-      - name: Go vet
-        working-directory: flutter_vpn_go/go_client
+      - name: go vet
+        working-directory: go_client
         run: go vet ./...
 
-      - name: Go build (host platform, for syntax check)
-        working-directory: flutter_vpn_go/go_client
-        run: |
-          # Build for host (not Android/iOS) to check syntax quickly
-          # We exclude the main package since it doesn't have a main() at root
-          go build ./client/...
+      - name: go build (host syntax check)
+        working-directory: go_client
+        run: go build ./client/...
 
-  # ── Android debug build ──────────────────────────────────────────────────────
+  # ── Android debug build ────────────────────────────────────────────────────
   build-android:
     name: Android Debug
     runs-on: ubuntu-latest
     needs: [analyze, go-check]
-
     env:
       NDK_VERSION: "26.3.11579264"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: "17"
-          distribution: "temurin"
+          distribution: temurin
           cache: gradle
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
-          cache-dependency-path: flutter_vpn_go/go_client/go.sum
+          cache-dependency-path: go_client/go.sum
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -167,18 +134,17 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install Android NDK
+      - name: Install NDK ${{ env.NDK_VERSION }}
         run: |
           echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
-            "ndk;$NDK_VERSION" \
-            "platforms;android-35"
+            "ndk;$NDK_VERSION" "platforms;android-35"
 
       - name: Go mod tidy
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: go mod tidy
 
-      - name: Build Go libclient.so (arm64 only — fast check)
-        working-directory: flutter_vpn_go/go_client
+      - name: Build libclient.so (arm64 only — fast CI check)
+        working-directory: go_client
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
         run: |
@@ -192,32 +158,28 @@ jobs:
           CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
           OUT="../android/vpnplugin/src/main/jniLibs/arm64-v8a/libclient.so"
           mkdir -p "$(dirname $OUT)"
-
           CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$CLANG" \
             go build -trimpath -ldflags="-s -w" -o "$OUT" ./cmd/android
-          echo "✅ arm64 libclient.so: $(du -sh $OUT | cut -f1)"
+          echo "✅ arm64: $(du -sh $OUT | cut -f1)"
 
-          # Create stub files for other ABIs so Gradle doesn't fail
+          # Stub other ABIs so Gradle finds all jniLibs
           for ABI in armeabi-v7a x86_64; do
-            STUB_DIR="../android/vpnplugin/src/main/jniLibs/$ABI"
-            mkdir -p "$STUB_DIR"
-            cp "$OUT" "$STUB_DIR/libclient.so"
+            D="../android/vpnplugin/src/main/jniLibs/$ABI"
+            mkdir -p "$D" && cp "$OUT" "$D/libclient.so"
           done
 
-      - name: Flutter pub get
-        working-directory: flutter_vpn_go
+      - name: pub get
         run: flutter pub get
 
-      - name: Flutter build APK (debug)
-        working-directory: flutter_vpn_go
+      - name: flutter build apk (debug)
         run: flutter build apk --debug --split-per-abi
 
-      - name: Check APK exists
+      - name: Verify APKs
         run: |
-          ls -lh flutter_vpn_go/build/app/outputs/flutter-apk/
-          echo "✅ APK build succeeded"
+          ls -lh build/app/outputs/flutter-apk/
+          echo "✅ Android build passed"
 
-  # ── iOS build check ───────────────────────────────────────────────────────────
+  # ── iOS build check ────────────────────────────────────────────────────────
   build-ios:
     name: iOS Check
     runs-on: macos-14
@@ -225,14 +187,13 @@ jobs:
     if: ${{ github.event.inputs.skip-ios != 'true' }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
-          cache-dependency-path: flutter_vpn_go/go_client/go.sum
+          cache-dependency-path: go_client/go.sum
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -251,47 +212,51 @@ jobs:
         run: gomobile init
 
       - name: Go mod tidy
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: go mod tidy
 
       - name: Build GoClient.xcframework
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: |
           mkdir -p ../ios/Frameworks
-          gomobile bind \
-            -target=ios \
-            -o ../ios/Frameworks/GoClient.xcframework \
-            ./client
-          echo "✅ XCFramework: $(du -sh ../ios/Frameworks/GoClient.xcframework | cut -f1)"
+          gomobile bind -target=ios \
+            -o ../ios/Frameworks/GoClient.xcframework ./client
+          echo "✅ $(du -sh ../ios/Frameworks/GoClient.xcframework | cut -f1)"
 
-      - name: Flutter pub get
-        working-directory: flutter_vpn_go
+      - name: pub get
         run: flutter pub get
 
-      - name: Flutter build iOS (no codesign)
-        working-directory: flutter_vpn_go
-        run: flutter build ios --debug --no-codesign --simulator
+      - name: flutter build ios (no codesign)
+        run: flutter build ios --debug --no-codesign
 
-      - name: Check .app exists
+      - name: Verify .app
         run: |
-          find flutter_vpn_go/build/ios -name "*.app" | head -5
+          find build/ios -name "*.app" | head -3
           echo "✅ iOS build check passed"
 
-  # ── Build matrix summary ──────────────────────────────────────────────────────
+  # ── Summary ────────────────────────────────────────────────────────────────
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
     needs: [analyze, test, go-check, build-android, build-ios]
     if: always()
-
     steps:
       - name: Write summary
         run: |
-          echo "## CI Results" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Analyze & Format | ${{ needs.analyze.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Unit Tests       | ${{ needs.test.result == 'success' && '✅ Passed' || needs.test.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Go Check         | ${{ needs.go-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Android Debug    | ${{ needs.build-android.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| iOS Check        | ${{ needs.build-ios.result == 'success' && '✅ Passed' || needs.build-ios.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          status() {
+            case "$1" in
+              success) echo "✅ Passed" ;;
+              skipped) echo "⏭️ Skipped" ;;
+              *)       echo "❌ Failed" ;;
+            esac
+          }
+          {
+            echo "## CI Results"
+            echo "| Job | Status |"
+            echo "|-----|--------|"
+            echo "| Analyze & Format | $(status ${{ needs.analyze.result }}) |"
+            echo "| Unit Tests       | $(status ${{ needs.test.result }}) |"
+            echo "| Go Check         | $(status ${{ needs.go-check.result }}) |"
+            echo "| Android Debug    | $(status ${{ needs.build-android.result }}) |"
+            echo "| iOS Check        | $(status ${{ needs.build-ios.result }}) |"
+          } >> $GITHUB_STEP_SUMMARY

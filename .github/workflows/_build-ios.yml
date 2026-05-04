@@ -1,6 +1,5 @@
 # Reusable workflow: build iOS IPA + Go XCFramework
-# Called by release.yml and build-check.yml
-# NOTE: iOS builds require macOS runner (no cross-compilation available).
+# The repository root IS the flutter project (pubspec.yaml is at repo root).
 
 name: Build iOS
 
@@ -8,94 +7,74 @@ on:
   workflow_call:
     inputs:
       flutter-version:
-        description: "Flutter version to use"
         type: string
         default: "3.22.x"
       go-version:
-        description: "Go version to use"
         type: string
         default: "1.22.x"
       build-type:
-        description: "release or debug"
         type: string
         default: "release"
       upload-artifacts:
-        description: "Upload build artifacts"
         type: boolean
         default: true
       xcode-version:
-        description: "Xcode version (empty = latest available)"
         type: string
         default: ""
     secrets:
-      # Apple signing (required for release IPA, optional for ad-hoc)
       IOS_CERTIFICATE_BASE64:
-        description: "Base64-encoded .p12 distribution certificate"
         required: false
       IOS_CERTIFICATE_PASSWORD:
         required: false
       IOS_PROVISIONING_PROFILE_BASE64:
-        description: "Base64-encoded .mobileprovision"
         required: false
       IOS_TEAM_ID:
-        description: "Apple Developer Team ID"
         required: false
       KEYCHAIN_PASSWORD:
-        description: "Temporary keychain password"
         required: false
     outputs:
-      ipa-path:
-        description: "Path to the built IPA"
-        value: ${{ jobs.build.outputs.ipa-path }}
-      xcarchive-path:
-        description: "Path to the xcarchive"
-        value: ${{ jobs.build.outputs.xcarchive-path }}
+      ipa:
+        value: ${{ jobs.build.outputs.ipa }}
 
 jobs:
   build:
     name: iOS (${{ inputs.build-type }})
-    runs-on: macos-14   # Apple Silicon, Xcode 15+
+    runs-on: macos-14
 
     outputs:
-      ipa-path:      ${{ steps.paths.outputs.ipa }}
-      xcarchive-path: ${{ steps.paths.outputs.xcarchive }}
-
-    env:
-      FLUTTER_VERSION: ${{ inputs.flutter-version }}
-      GO_VERSION:      ${{ inputs.go-version }}
-      BUILD_TYPE:      ${{ inputs.build-type }}
+      ipa: ${{ steps.collect.outputs.ipa }}
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
+      # ── Checkout ──────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ── Xcode version ────────────────────────────────────────────────────────
-      - name: Select Xcode version
+      # ── Xcode ─────────────────────────────────────────────────────────────
+      - name: Select Xcode
         if: ${{ inputs.xcode-version != '' }}
         run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode-version }}.app/Contents/Developer
 
-      - name: Xcode info
+      - name: Xcode version
         run: xcodebuild -version
 
-      # ── Go ───────────────────────────────────────────────────────────────────
-      - name: Set up Go ${{ env.GO_VERSION }}
+      # ── Go ────────────────────────────────────────────────────────────────
+      - name: Set up Go ${{ inputs.go-version }}
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: flutter_vpn_go/go_client/go.sum
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: go_client/go.sum
 
-      # ── Flutter ──────────────────────────────────────────────────────────────
-      - name: Set up Flutter ${{ env.FLUTTER_VERSION }}
+      # ── Flutter ───────────────────────────────────────────────────────────
+      - name: Set up Flutter ${{ inputs.flutter-version }}
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: ${{ inputs.flutter-version }}
           channel: stable
           cache: true
 
-      # ── gomobile ─────────────────────────────────────────────────────────────
+      # ── gomobile ──────────────────────────────────────────────────────────
       - name: Install gomobile
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
@@ -105,218 +84,179 @@ jobs:
       - name: gomobile init
         run: gomobile init
 
-      # ── Go mod tidy ──────────────────────────────────────────────────────────
+      # ── Go mod tidy ───────────────────────────────────────────────────────
       - name: Go mod tidy
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: go mod tidy
 
-      # ── Build GoClient.xcframework ───────────────────────────────────────────
+      # ── Build GoClient.xcframework ────────────────────────────────────────
       - name: Build GoClient.xcframework
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: |
-          OUT="../ios/Frameworks/GoClient.xcframework"
-          rm -rf "$OUT"
+          rm -rf ../ios/Frameworks/GoClient.xcframework
           mkdir -p ../ios/Frameworks
-
           gomobile bind \
             -target=ios \
-            -o "$OUT" \
+            -o ../ios/Frameworks/GoClient.xcframework \
             ./client
+          echo "✅ XCFramework: $(du -sh ../ios/Frameworks/GoClient.xcframework | cut -f1)"
 
-          echo "✅ XCFramework built:"
-          du -sh "$OUT"
-          ls -la "$OUT/"
-
-      # ── Flutter pub get ──────────────────────────────────────────────────────
+      # ── Flutter pub get ───────────────────────────────────────────────────
       - name: Flutter pub get
-        working-directory: flutter_vpn_go
         run: flutter pub get
 
-      # ── iOS signing setup (release only) ─────────────────────────────────────
+      # ── iOS signing ───────────────────────────────────────────────────────
       - name: Set up iOS signing
         if: >
           ${{ inputs.build-type == 'release' &&
               secrets.IOS_CERTIFICATE_BASE64 != '' &&
               secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
         env:
-          IOS_CERTIFICATE_BASE64:         ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD:       ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERT_B64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          CERT_PASS: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PP_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KC_PASS: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # Create temp keychain
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          KC="$RUNNER_TEMP/build.keychain"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
 
-          # Import certificate
-          CERT_PATH="$RUNNER_TEMP/certificate.p12"
-          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
-          security import "$CERT_PATH" \
-            -P "$IOS_CERTIFICATE_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          CERT="$RUNNER_TEMP/cert.p12"
+          echo "$CERT_B64" | base64 --decode -o "$CERT"
+          security import "$CERT" -P "$CERT_PASS" -A -t cert -f pkcs12 -k "$KC"
+          security list-keychain -d user -s "$KC"
 
-          # Install provisioning profile
-          PP_PATH="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
-          UUID=$(security cms -D -i "$PP_PATH" | \
+          PP="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$PP_B64" | base64 --decode -o "$PP"
+          UUID=$(security cms -D -i "$PP" | \
                  plutil -extract UUID xml1 - -o - | \
                  sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${UUID}.mobileprovision"
-          echo "✅ Provisioning profile installed: $UUID"
+          cp "$PP" "$HOME/Library/MobileDevice/Provisioning Profiles/${UUID}.mobileprovision"
+          echo "✅ Profile: $UUID"
 
-      # ── Flutter build iOS ─────────────────────────────────────────────────────
+      # ── Flutter build iOS ─────────────────────────────────────────────────
       - name: Flutter build iOS (no codesign)
-        working-directory: flutter_vpn_go
         if: >
           ${{ inputs.build-type == 'debug' ||
               secrets.IOS_CERTIFICATE_BASE64 == '' }}
-        run: |
-          flutter build ios \
-            --$BUILD_TYPE \
-            --no-codesign
+        run: flutter build ios --${{ inputs.build-type }} --no-codesign
 
       - name: Flutter build iOS (signed)
-        working-directory: flutter_vpn_go
         if: >
           ${{ inputs.build-type == 'release' &&
               secrets.IOS_CERTIFICATE_BASE64 != '' }}
         run: |
-          flutter build ios \
-            --$BUILD_TYPE \
-            --obfuscate \
-            --split-debug-info=build/debug-info
+          flutter build ios --release \
+            --obfuscate --split-debug-info=build/debug-info
 
-      # ── Archive & export IPA ─────────────────────────────────────────────────
-      - name: Archive with xcodebuild
-        working-directory: flutter_vpn_go/ios
+      # ── Archive ───────────────────────────────────────────────────────────
+      - name: xcodebuild archive
+        working-directory: ios
         run: |
           VERSION=$(grep '^version:' ../pubspec.yaml | sed 's/version: //' | tr -d ' \r\n')
           BUILD_NUM=$(echo "$VERSION" | cut -d'+' -f2)
-          APP_VER=$(echo "$VERSION" | cut -d'+' -f1)
+          APP_VER=$(echo "$VERSION"  | cut -d'+' -f1)
 
-          ARCHIVE_PATH="$RUNNER_TEMP/Runner.xcarchive"
+          ARCHIVE="$RUNNER_TEMP/Runner.xcarchive"
+          echo "ARCHIVE_PATH=$ARCHIVE" >> $GITHUB_ENV
 
-          if [ "$BUILD_TYPE" = "release" ] && [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
+          if [ "${{ inputs.build-type }}" = "release" ] && \
+             [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
             xcodebuild archive \
               -workspace Runner.xcworkspace \
               -scheme Runner \
               -configuration Release \
-              -archivePath "$ARCHIVE_PATH" \
+              -archivePath "$ARCHIVE" \
               -destination "generic/platform=iOS" \
               DEVELOPMENT_TEAM="${{ secrets.IOS_TEAM_ID }}" \
               CURRENT_PROJECT_VERSION="$BUILD_NUM" \
               MARKETING_VERSION="$APP_VER" \
               CODE_SIGN_STYLE=Manual \
-              | xcpretty || true
+              2>&1 | tail -30
           else
-            # No-codesign archive (unsigned IPA for sideloading)
             xcodebuild archive \
               -workspace Runner.xcworkspace \
               -scheme Runner \
               -configuration Release \
-              -archivePath "$ARCHIVE_PATH" \
+              -archivePath "$ARCHIVE" \
               -destination "generic/platform=iOS" \
               CODE_SIGNING_ALLOWED=NO \
-              | xcpretty || true
+              2>&1 | tail -30
           fi
+          echo "✅ Archive: $ARCHIVE"
 
-          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> $GITHUB_ENV
-
+      # ── Export IPA ────────────────────────────────────────────────────────
       - name: Export IPA
         run: |
-          EXPORT_PATH="$RUNNER_TEMP/ipa-export"
-          mkdir -p "$EXPORT_PATH"
+          EXPORT="$RUNNER_TEMP/ipa-export"
+          mkdir -p "$EXPORT"
+          echo "EXPORT_PATH=$EXPORT" >> $GITHUB_ENV
 
-          if [ "$BUILD_TYPE" = "release" ] && [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
-            # Export with distribution signing
-            cat > "$RUNNER_TEMP/ExportOptions.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>ad-hoc</string>
-            <key>teamID</key>
-            <string>${{ secrets.IOS_TEAM_ID }}</string>
-            <key>compileBitcode</key>
-            <false/>
-            <key>thinning</key>
-            <string>&lt;none&gt;</string>
-          </dict>
-          </plist>
-          EOF
-
+          if [ "${{ inputs.build-type }}" = "release" ] && \
+             [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
+            cat > "$RUNNER_TEMP/ExportOptions.plist" << 'EOF'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict>
+              <key>method</key><string>ad-hoc</string>
+              <key>teamID</key><string>${{ secrets.IOS_TEAM_ID }}</string>
+              <key>compileBitcode</key><false/>
+            </dict></plist>
+            EOF
             xcodebuild -exportArchive \
               -archivePath "$ARCHIVE_PATH" \
-              -exportPath "$EXPORT_PATH" \
+              -exportPath "$EXPORT" \
               -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-              | xcpretty || true
+              2>&1 | tail -20
           else
-            # Unsigned IPA export
-            APP_PATH=$(find "$ARCHIVE_PATH" -name "*.app" | head -1)
-            PAYLOAD_DIR="$EXPORT_PATH/Payload"
-            mkdir -p "$PAYLOAD_DIR"
-            cp -r "$APP_PATH" "$PAYLOAD_DIR/"
-            (cd "$EXPORT_PATH" && zip -qr "Runner.ipa" Payload/)
+            # Unsigned IPA (zip Payload/)
+            APP=$(find "$ARCHIVE_PATH" -name "*.app" | head -1)
+            PAYLOAD="$EXPORT/Payload"
+            mkdir -p "$PAYLOAD"
+            cp -r "$APP" "$PAYLOAD/"
+            (cd "$EXPORT" && zip -qr Runner.ipa Payload/)
           fi
 
-          echo "EXPORT_PATH=$EXPORT_PATH" >> $GITHUB_ENV
-
-      # ── Rename artifacts ──────────────────────────────────────────────────────
-      - name: Rename and collect artifacts
-        id: paths
-        working-directory: flutter_vpn_go
+      # ── Collect artifacts ─────────────────────────────────────────────────
+      - name: Collect artifacts
+        id: collect
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | tr -d ' \r\n')
           SHORT_SHA=$(git rev-parse --short HEAD)
-          SUFFIX="${VERSION}-${SHORT_SHA}-${BUILD_TYPE}"
+          SUFFIX="${VERSION}-${SHORT_SHA}"
 
-          OUT_DIR="dist-ios"
-          mkdir -p "$OUT_DIR"
+          mkdir -p dist-ios
 
-          # IPA
-          IPA_SRC=$(find "$EXPORT_PATH" -name "*.ipa" | head -1)
-          if [ -n "$IPA_SRC" ]; then
-            cp "$IPA_SRC" "$OUT_DIR/flutter-vpn-go-${SUFFIX}.ipa"
-            echo "ipa=flutter_vpn_go/$OUT_DIR/flutter-vpn-go-${SUFFIX}.ipa" >> $GITHUB_OUTPUT
+          IPA=$(find "$EXPORT_PATH" -name "*.ipa" | head -1)
+          if [ -n "$IPA" ]; then
+            DEST="dist-ios/flutter-vpn-go-${SUFFIX}.ipa"
+            cp "$IPA" "$DEST"
+            echo "ipa=$DEST" >> $GITHUB_OUTPUT
+            echo "✅ IPA: $(du -sh $DEST | cut -f1)"
           fi
 
-          # xcarchive (zip for debugging symbols)
-          zip -qr "$OUT_DIR/flutter-vpn-go-${SUFFIX}.xcarchive.zip" \
-            "$ARCHIVE_PATH" 2>/dev/null || true
+          ls -lh dist-ios/
 
-          echo "xcarchive=flutter_vpn_go/$OUT_DIR/flutter-vpn-go-${SUFFIX}.xcarchive.zip" >> $GITHUB_OUTPUT
-
-          echo "Artifacts:"
-          ls -lh "$OUT_DIR/"
-
-      # ── Generate checksums ────────────────────────────────────────────────────
+      # ── Checksums ─────────────────────────────────────────────────────────
       - name: Generate checksums
-        working-directory: flutter_vpn_go/dist-ios
-        run: |
-          shasum -a 256 * > SHA256SUMS-ios.txt
-          cat SHA256SUMS-ios.txt
+        working-directory: dist-ios
+        run: shasum -a 256 * > SHA256SUMS-ios.txt && cat SHA256SUMS-ios.txt
 
-      # ── Cleanup keychain ──────────────────────────────────────────────────────
-      - name: Cleanup signing artifacts
+      # ── Cleanup keychain ──────────────────────────────────────────────────
+      - name: Cleanup signing
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/profile.mobileprovision" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.mobileprovision" || true
 
-      # ── Upload artifacts ──────────────────────────────────────────────────────
+      # ── Upload ────────────────────────────────────────────────────────────
       - name: Upload iOS artifacts
         if: ${{ inputs.upload-artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ios-${{ inputs.build-type }}
-          path: flutter_vpn_go/dist-ios/
+          path: dist-ios/
           retention-days: 30
           if-no-files-found: warn

@@ -2,24 +2,10 @@
 # release.yml
 #
 # Triggered by:
-#   • Pushing a semver tag:  git tag v1.2.3 && git push origin v1.2.3
-#   • Manual dispatch from GitHub Actions UI (workflow_dispatch)
+#   git tag v1.2.3 && git push origin v1.2.3
+#   OR: Actions → Release → Run workflow
 #
-# Steps:
-#   1. [parallel] build-android  — ubuntu-latest
-#       a. Build Go libclient.so (arm64, armeabi-v7a, x86_64) via CGO
-#       b. flutter build apk --split-per-abi
-#       c. flutter build apk (universal)
-#       d. flutter build appbundle (AAB)
-#   2. [parallel] build-ios      — macos-14
-#       a. gomobile bind → GoClient.xcframework
-#       b. flutter build ios
-#       c. xcodebuild archive + export IPA
-#   3. [sequential] create-release — ubuntu-latest
-#       a. Download all artifacts
-#       b. Generate combined SHA256SUMS
-#       c. Generate release notes (git log since last tag)
-#       d. gh release create with all files
+# The repository root IS the flutter project (pubspec.yaml at root).
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -27,15 +13,15 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"       # v1.2.3
-      - "v[0-9]+.[0-9]+.[0-9]+-*"     # v1.2.3-beta.1
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.2.3). Creates it if absent."
+        description: "Release tag (e.g. v1.2.3)"
         required: true
-        default: "v0.0.0-dev"
+        default: "v0.0.1-dev"
       prerelease:
         description: "Mark as pre-release?"
         type: boolean
@@ -46,21 +32,20 @@ on:
         options: [release, debug]
         default: release
       skip-ios:
-        description: "Skip iOS build (saves ~20 min on macOS runner)"
+        description: "Skip iOS build (saves ~20 min)"
         type: boolean
         default: false
 
-# Prevent concurrent releases of the same ref
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write   # create release + upload assets
+  contents: write
   actions: read
 
 jobs:
-  # ── Resolve inputs ──────────────────────────────────────────────────────────
+  # ── Resolve tag / version ────────────────────────────────────────────────
   setup:
     name: Setup
     runs-on: ubuntu-latest
@@ -82,87 +67,78 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TAG="${{ github.event.inputs.tag }}"
-            BUILD_TYPE="${{ github.event.inputs.build-type }}"
-            PRERELEASE="${{ github.event.inputs.prerelease }}"
-            SKIP_IOS="${{ github.event.inputs.skip-ios }}"
+            BT="${{ github.event.inputs.build-type }}"
+            PRE="${{ github.event.inputs.prerelease }}"
+            SKIP="${{ github.event.inputs.skip-ios }}"
           else
             TAG="${{ github.ref_name }}"
-            # Auto-detect prerelease from tag suffix (e.g. v1.0.0-beta.1)
-            if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-              PRERELEASE="false"
-            else
-              PRERELEASE="true"
-            fi
-            BUILD_TYPE="release"
-            SKIP_IOS="false"
+            BT="release"
+            SKIP="false"
+            # Auto-detect prerelease: pure semver = stable, anything else = pre
+            echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              && PRE="false" || PRE="true"
           fi
-
-          # Strip leading 'v' for flutter version string
           VERSION="${TAG#v}"
-
-          echo "tag=$TAG"           >> $GITHUB_OUTPUT
-          echo "version=$VERSION"   >> $GITHUB_OUTPUT
-          echo "build-type=$BUILD_TYPE" >> $GITHUB_OUTPUT
-          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
-          echo "skip-ios=$SKIP_IOS"   >> $GITHUB_OUTPUT
-
-          echo "📦 Tag: $TAG | Version: $VERSION | Type: $BUILD_TYPE | Pre: $PRERELEASE"
+          echo "tag=$TAG"        >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build-type=$BT"  >> $GITHUB_OUTPUT
+          echo "prerelease=$PRE" >> $GITHUB_OUTPUT
+          echo "skip-ios=$SKIP"  >> $GITHUB_OUTPUT
+          echo "📦 $TAG | $VERSION | $BT | pre=$PRE"
 
       - name: Create tag (workflow_dispatch only)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           TAG="${{ steps.vars.outputs.tag }}"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists — skipping creation"
+            echo "Tag $TAG already exists"
           else
             git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG"
-            git push origin "$TAG"
-            echo "✅ Created and pushed tag $TAG"
+            git tag "$TAG" && git push origin "$TAG"
+            echo "✅ Created tag $TAG"
           fi
 
-  # ── Android build ────────────────────────────────────────────────────────────
+  # ── Android ──────────────────────────────────────────────────────────────
   build-android:
     name: Build Android
     needs: setup
     uses: ./.github/workflows/_build-android.yml
     with:
-      flutter-version: "3.22.x"
-      go-version:      "1.22.x"
-      build-type:      ${{ needs.setup.outputs.build-type }}
+      flutter-version:  "3.22.x"
+      go-version:       "1.22.x"
+      build-type:       ${{ needs.setup.outputs.build-type }}
       upload-artifacts: true
     secrets:
-      KEYSTORE_BASE64:    ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD:  ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      KEY_ALIAS:          ${{ secrets.ANDROID_KEY_ALIAS }}
-      KEY_PASSWORD:       ${{ secrets.ANDROID_KEY_PASSWORD }}
+      KEYSTORE_BASE64:   ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-  # ── iOS build ─────────────────────────────────────────────────────────────────
+  # ── iOS ───────────────────────────────────────────────────────────────────
   build-ios:
     name: Build iOS
     needs: setup
     if: ${{ needs.setup.outputs.skip-ios == 'false' }}
     uses: ./.github/workflows/_build-ios.yml
     with:
-      flutter-version: "3.22.x"
-      go-version:      "1.22.x"
-      build-type:      ${{ needs.setup.outputs.build-type }}
+      flutter-version:  "3.22.x"
+      go-version:       "1.22.x"
+      build-type:       ${{ needs.setup.outputs.build-type }}
       upload-artifacts: true
     secrets:
-      IOS_CERTIFICATE_BASE64:          ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-      IOS_CERTIFICATE_PASSWORD:        ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-      IOS_TEAM_ID:                     ${{ secrets.IOS_TEAM_ID }}
-      KEYCHAIN_PASSWORD:               ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+      IOS_CERTIFICATE_BASE64:           ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD:         ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64:  ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID:                      ${{ secrets.IOS_TEAM_ID }}
+      KEYCHAIN_PASSWORD:                ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
 
-  # ── Create GitHub Release ─────────────────────────────────────────────────────
+  # ── Create Release ────────────────────────────────────────────────────────
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
     needs: [setup, build-android, build-ios]
-    # Run even if iOS was skipped (but not if Android failed)
-    if: >
+    if: >-
       always() &&
       needs.build-android.result == 'success' &&
       (needs.build-ios.result == 'success' || needs.build-ios.result == 'skipped')
@@ -173,151 +149,96 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Download Android artifacts ──────────────────────────────────────────
       - name: Download Android artifacts
         uses: actions/download-artifact@v4
         with:
           name: android-${{ needs.setup.outputs.build-type }}
-          path: release-assets/android/
+          path: release-assets/
 
-      # ── Download iOS artifacts ──────────────────────────────────────────────
       - name: Download iOS artifacts
         if: ${{ needs.build-ios.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: ios-${{ needs.setup.outputs.build-type }}
-          path: release-assets/ios/
+          path: release-assets/
 
-      # ── Combine all files ───────────────────────────────────────────────────
-      - name: Collect all release assets
+      - name: Flatten artifact paths
         run: |
           mkdir -p release-final
-          find release-assets/ -type f | while read f; do
-            cp "$f" release-final/
-          done
-          echo "📦 All release assets:"
+          find release-assets/ -type f -exec cp {} release-final/ \;
+          echo "=== All release assets ==="
           ls -lh release-final/
 
-      # ── Combined checksums ──────────────────────────────────────────────────
       - name: Generate combined checksums
         working-directory: release-final
         run: |
-          # Remove per-platform checksum files, generate one combined file
           rm -f SHA256SUMS-android.txt SHA256SUMS-ios.txt
           sha256sum * > SHA256SUMS.txt
-          echo ""
-          echo "=== SHA256SUMS ==="
           cat SHA256SUMS.txt
 
-      # ── Generate release notes ─────────────────────────────────────────────
       - name: Generate release notes
         id: notes
         run: |
           TAG="${{ needs.setup.outputs.tag }}"
           VERSION="${{ needs.setup.outputs.version }}"
-          BUILD_TYPE="${{ needs.setup.outputs.build-type }}"
+          BT="${{ needs.setup.outputs.build-type }}"
+          DATE=$(date -u '+%Y-%m-%d %H:%M UTC')
+          SHA=$(git rev-parse --short HEAD)
 
-          # Previous tag for changelog range
-          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
-
-          if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${TAG}" 2>/dev/null || echo "")
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          if [ -n "$PREV" ]; then
+            LOG=$(git log --pretty=format:"- %s (%h)" "${PREV}..${TAG}" 2>/dev/null)
           else
-            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --max-count=20 || echo "")
+            LOG=$(git log --pretty=format:"- %s (%h)" --max-count=20)
           fi
 
-          BUILD_DATE=$(date -u '+%Y-%m-%d %H:%M UTC')
-          SHORT_SHA=$(git rev-parse --short HEAD)
+          ASSETS=$(ls release-final/ | grep -v SHA256SUMS | sed 's/^/- `/' | sed 's/$/`/')
 
-          # List available assets
-          ASSET_LIST=$(ls release-final/ | grep -v SHA256SUMS | while read f; do echo "- \`$f\`"; done)
-
-          cat > release-notes.md << EOF
+          cat > notes.md << EOF
           ## flutter_vpn_go $VERSION
 
-          **Build:** \`$BUILD_TYPE\` | **Date:** $BUILD_DATE | **Commit:** \`$SHORT_SHA\`
+          **Build:** \`$BT\` | **Date:** $DATE | **Commit:** \`$SHA\`
 
           ---
 
           ### 📦 Downloads
 
-          $ASSET_LIST
+          $ASSETS
 
-          > **Checksums:** See \`SHA256SUMS.txt\` attached to this release.
-
-          ---
-
-          ### 📋 What's included
-
-          | File | Description |
-          |---|---|
-          | \`*-arm64-v8a.apk\` | Android APK — modern devices (ARM64) |
-          | \`*-armeabi-v7a.apk\` | Android APK — older devices (ARMv7) |
-          | \`*-x86_64.apk\` | Android APK — emulators (x86_64) |
-          | \`*-universal.apk\` | Android APK — all ABIs (larger, works on any device) |
-          | \`*.aab\` | Android App Bundle — for Google Play upload |
-          | \`*.ipa\` | iOS IPA — sideload via AltStore / Sideloadly |
-          | \`SHA256SUMS.txt\` | SHA256 checksums for all files |
+          > **Checksums:** \`SHA256SUMS.txt\` is attached to this release.
 
           ---
 
-          ### 🔧 Setup
+          ### 📱 Install
 
-          #### Android
-          1. Download the APK for your device ABI (or the universal APK).
-          2. Enable "Install from unknown sources" in Android Settings.
-          3. Install the APK.
-          4. On first launch, allow the VPN permission when prompted.
+          | File | Platform | Notes |
+          |------|----------|-------|
+          | \`*-arm64-v8a.apk\` | Android | Modern devices (recommended) |
+          | \`*-armeabi-v7a.apk\` | Android | Older devices |
+          | \`*-x86_64.apk\` | Android | Emulator |
+          | \`*-universal.apk\` | Android | All architectures |
+          | \`*.aab\` | Android | Google Play upload |
+          | \`*.ipa\` | iOS | AltStore / Sideloadly |
 
-          #### iOS
-          1. Download the \`.ipa\` file.
-          2. Use [AltStore](https://altstore.io/) or [Sideloadly](https://sideloadly.io/) to install.
-          3. Trust the developer certificate in Settings → General → VPN & Device Management.
-          4. ⚠️ **iOS Simulator is not supported for VPN functionality** — real device required.
+          **Android:** Enable "Install from unknown sources" → install APK → allow VPN.
 
-          ---
+          **iOS:** Install via [AltStore](https://altstore.io/) or [Sideloadly](https://sideloadly.io/) → trust cert.
 
-          ### ⚙️ Configuration
-
-          Import your server config via the **Import** tab using this JSON format:
-
-          \`\`\`json
-          {
-            "name": "My Server",
-            "serverHost": "your-server.example.com",
-            "serverPort": 443,
-            "transportType": "mock",
-            "authToken": "your-token",
-            "mtu": 1280
-          }
-          \`\`\`
+          > ⚠️ iOS Simulator is **not supported** — VPN requires a physical device.
 
           ---
 
-          ### 📝 Changelog
+          ### 📝 Changes
 
-          ${CHANGELOG:-*No previous tag found — this may be the first release.*}
-
-          ---
-
-          ### ⚠️ Security Notes
-
-          - Auth tokens are stored in the system Keychain (iOS) / EncryptedSharedPreferences (Android).
-          - Never share your config JSON with sensitive \`authToken\` fields.
-          - This app connects **only** to the server you configure — no third-party relays.
-
+          ${LOG:-*First release.*}
           EOF
 
-          echo "notes_file=release-notes.md" >> $GITHUB_OUTPUT
-          cat release-notes.md
-
-      # ── Create GitHub Release ──────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name:   ${{ needs.setup.outputs.tag }}
           name:       "flutter_vpn_go ${{ needs.setup.outputs.tag }}"
-          body_path:  release-notes.md
+          body_path:  notes.md
           prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
           draft:      false
           files:      release-final/*
@@ -325,16 +246,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Release summary ────────────────────────────────────────────────────
       - name: Summary
         run: |
           TAG="${{ needs.setup.outputs.tag }}"
-          echo "## 🚀 Release Created" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag:** \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/$TAG" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Assets" >> $GITHUB_STEP_SUMMARY
-          ls release-final/ | while read f; do
-            echo "- \`$f\` ($(du -sh release-final/$f | cut -f1))" >> $GITHUB_STEP_SUMMARY
-          done
+          {
+            echo "## 🚀 Release: $TAG"
+            echo ""
+            echo "**URL:** https://github.com/${{ github.repository }}/releases/tag/$TAG"
+            echo ""
+            echo "### Assets"
+            ls release-final/ | while read f; do
+              echo "- \`$f\` — $(du -sh release-final/$f | cut -f1)"
+            done
+          } >> $GITHUB_STEP_SUMMARY

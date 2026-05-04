@@ -1,5 +1,5 @@
 # Reusable workflow: build Android APK + AAB + Go libclient.so
-# Called by release.yml and build-check.yml
+# The repository root IS the flutter project (pubspec.yaml is at repo root).
 
 name: Build Android
 
@@ -7,24 +7,19 @@ on:
   workflow_call:
     inputs:
       flutter-version:
-        description: "Flutter version to use"
         type: string
         default: "3.22.x"
       go-version:
-        description: "Go version to use"
         type: string
         default: "1.22.x"
       build-type:
-        description: "release or debug"
         type: string
         default: "release"
       upload-artifacts:
-        description: "Upload build artifacts"
         type: boolean
         default: true
     secrets:
       KEYSTORE_BASE64:
-        description: "Base64-encoded release keystore (.jks)"
         required: false
       KEYSTORE_PASSWORD:
         required: false
@@ -33,12 +28,10 @@ on:
       KEY_PASSWORD:
         required: false
     outputs:
-      apk-path:
-        description: "Path to the built APK"
-        value: ${{ jobs.build.outputs.apk-path }}
-      aab-path:
-        description: "Path to the built AAB"
-        value: ${{ jobs.build.outputs.aab-path }}
+      apk-universal:
+        value: ${{ jobs.build.outputs.apk-universal }}
+      aab:
+        value: ${{ jobs.build.outputs.aab }}
 
 jobs:
   build:
@@ -46,48 +39,44 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      apk-path: ${{ steps.paths.outputs.apk }}
-      aab-path: ${{ steps.paths.outputs.aab }}
+      apk-universal: ${{ steps.collect.outputs.apk-universal }}
+      aab:           ${{ steps.collect.outputs.aab }}
 
     env:
-      FLUTTER_VERSION: ${{ inputs.flutter-version }}
-      GO_VERSION:      ${{ inputs.go-version }}
-      BUILD_TYPE:      ${{ inputs.build-type }}
-      # NDK version pinned for reproducibility
-      NDK_VERSION:     "26.3.11579264"
-      ANDROID_API:     "26"
+      NDK_VERSION: "26.3.11579264"
+      ANDROID_API: "26"
 
     steps:
-      # ── Checkout ────────────────────────────────────────────────────────────
+      # ── Checkout ──────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # tags needed for version strings
+          fetch-depth: 0
 
-      # ── Java ────────────────────────────────────────────────────────────────
+      # ── Java ──────────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: "17"
-          distribution: "temurin"
+          distribution: temurin
           cache: gradle
 
-      # ── Go ──────────────────────────────────────────────────────────────────
-      - name: Set up Go ${{ env.GO_VERSION }}
+      # ── Go ────────────────────────────────────────────────────────────────
+      - name: Set up Go ${{ inputs.go-version }}
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: flutter_vpn_go/go_client/go.sum
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: go_client/go.sum
 
-      # ── Flutter ─────────────────────────────────────────────────────────────
-      - name: Set up Flutter ${{ env.FLUTTER_VERSION }}
+      # ── Flutter ───────────────────────────────────────────────────────────
+      - name: Set up Flutter ${{ inputs.flutter-version }}
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: ${{ inputs.flutter-version }}
           channel: stable
           cache: true
 
-      # ── Android SDK + NDK ───────────────────────────────────────────────────
+      # ── Android NDK ───────────────────────────────────────────────────────
       - name: Install Android NDK ${{ env.NDK_VERSION }}
         run: |
           echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
@@ -95,18 +84,17 @@ jobs:
             "build-tools;34.0.0" \
             "platforms;android-35"
 
-      # ── Go module tidy ───────────────────────────────────────────────────────
+      # ── Go mod tidy ───────────────────────────────────────────────────────
       - name: Go mod tidy
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         run: go mod tidy
 
-      # ── Build Go libclient.so for all ABIs ──────────────────────────────────
+      # ── Build libclient.so for each ABI ───────────────────────────────────
       - name: Build Go libclient.so (arm64-v8a)
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
         run: |
-          # Create cmd/android/main.go entry point
           mkdir -p cmd/android
           cat > cmd/android/main.go << 'EOF'
           package main
@@ -117,60 +105,54 @@ jobs:
           CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
           OUT="../android/vpnplugin/src/main/jniLibs/arm64-v8a/libclient.so"
           mkdir -p "$(dirname $OUT)"
-
           CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$CLANG" \
             go build -trimpath -ldflags="-s -w" -o "$OUT" ./cmd/android
-          echo "arm64 size: $(du -sh $OUT | cut -f1)"
+          echo "✅ arm64: $(du -sh $OUT | cut -f1)"
 
       - name: Build Go libclient.so (armeabi-v7a)
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
         run: |
           CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi${ANDROID_API}-clang"
           OUT="../android/vpnplugin/src/main/jniLibs/armeabi-v7a/libclient.so"
           mkdir -p "$(dirname $OUT)"
-
           CGO_ENABLED=1 GOOS=android GOARCH=arm CC="$CLANG" \
             go build -trimpath -ldflags="-s -w" -o "$OUT" ./cmd/android
-          echo "armv7 size: $(du -sh $OUT | cut -f1)"
+          echo "✅ armeabi-v7a: $(du -sh $OUT | cut -f1)"
 
       - name: Build Go libclient.so (x86_64)
-        working-directory: flutter_vpn_go/go_client
+        working-directory: go_client
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
         run: |
           CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android${ANDROID_API}-clang"
           OUT="../android/vpnplugin/src/main/jniLibs/x86_64/libclient.so"
           mkdir -p "$(dirname $OUT)"
-
           CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CLANG" \
             go build -trimpath -ldflags="-s -w" -o "$OUT" ./cmd/android
-          echo "x86_64 size: $(du -sh $OUT | cut -f1)"
+          echo "✅ x86_64: $(du -sh $OUT | cut -f1)"
 
-      - name: Verify libclient.so artifacts
+      - name: Verify libclient.so files
         run: |
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            f="flutter_vpn_go/android/vpnplugin/src/main/jniLibs/$abi/libclient.so"
-            if [ ! -f "$f" ]; then
-              echo "❌ Missing: $f"
-              exit 1
-            fi
+            f="android/vpnplugin/src/main/jniLibs/$abi/libclient.so"
+            [ -f "$f" ] || { echo "❌ Missing $f"; exit 1; }
             echo "✅ $abi: $(du -sh $f | cut -f1)"
           done
 
-      # ── Flutter pub get ─────────────────────────────────────────────────────
+      # ── Flutter pub get ───────────────────────────────────────────────────
       - name: Flutter pub get
-        working-directory: flutter_vpn_go
         run: flutter pub get
 
-      # ── Keystore setup (release only) ───────────────────────────────────────
+      # ── Keystore setup ────────────────────────────────────────────────────
       - name: Set up keystore
-        if: ${{ inputs.build-type == 'release' && secrets.KEYSTORE_BASE64 != '' }}
-        working-directory: flutter_vpn_go/android
+        if: >
+          inputs.build-type == 'release' &&
+          secrets.KEYSTORE_BASE64 != ''
+        working-directory: android
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release.jks
-
           cat > key.properties << EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
@@ -179,101 +161,82 @@ jobs:
           EOF
           echo "✅ Keystore configured"
 
-      # ── Flutter build APK (per ABI splits) ─────────────────────────────────
+      # ── Build APK (split per ABI) ─────────────────────────────────────────
       - name: Flutter build APK (split per ABI)
-        working-directory: flutter_vpn_go
         run: |
-          if [ "$BUILD_TYPE" = "release" ] && [ -f "android/key.properties" ]; then
-            flutter build apk \
-              --split-per-abi \
-              --$BUILD_TYPE \
-              --obfuscate \
-              --split-debug-info=build/debug-info
+          if [ "${{ inputs.build-type }}" = "release" ] && [ -f "android/key.properties" ]; then
+            flutter build apk --split-per-abi --release \
+              --obfuscate --split-debug-info=build/debug-info
           else
-            flutter build apk \
-              --split-per-abi \
-              --$BUILD_TYPE
+            flutter build apk --split-per-abi --${{ inputs.build-type }}
           fi
 
-      # ── Flutter build APK (universal / fat) ─────────────────────────────────
+      # ── Build APK (universal) ─────────────────────────────────────────────
       - name: Flutter build APK (universal)
-        working-directory: flutter_vpn_go
         run: |
-          if [ "$BUILD_TYPE" = "release" ] && [ -f "android/key.properties" ]; then
-            flutter build apk \
-              --$BUILD_TYPE \
-              --obfuscate \
-              --split-debug-info=build/debug-info
+          if [ "${{ inputs.build-type }}" = "release" ] && [ -f "android/key.properties" ]; then
+            flutter build apk --release \
+              --obfuscate --split-debug-info=build/debug-info
           else
-            flutter build apk --$BUILD_TYPE
+            flutter build apk --${{ inputs.build-type }}
           fi
 
-      # ── Flutter build AAB (Play Store) ──────────────────────────────────────
+      # ── Build AAB ─────────────────────────────────────────────────────────
       - name: Flutter build AAB
-        working-directory: flutter_vpn_go
         run: |
-          if [ "$BUILD_TYPE" = "release" ] && [ -f "android/key.properties" ]; then
-            flutter build appbundle \
-              --$BUILD_TYPE \
-              --obfuscate \
-              --split-debug-info=build/debug-info
+          if [ "${{ inputs.build-type }}" = "release" ] && [ -f "android/key.properties" ]; then
+            flutter build appbundle --release \
+              --obfuscate --split-debug-info=build/debug-info
           else
-            flutter build appbundle --$BUILD_TYPE
+            flutter build appbundle --${{ inputs.build-type }}
           fi
 
-      # ── Rename artifacts with version + commit ──────────────────────────────
-      - name: Rename and collect artifacts
-        id: paths
-        working-directory: flutter_vpn_go
+      # ── Collect & rename artifacts ────────────────────────────────────────
+      - name: Collect artifacts
+        id: collect
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | tr -d ' \r\n')
           SHORT_SHA=$(git rev-parse --short HEAD)
-          SUFFIX="${VERSION}-${SHORT_SHA}-${BUILD_TYPE}"
+          BT="${{ inputs.build-type }}"
+          SUFFIX="${VERSION}-${SHORT_SHA}"
 
-          OUT_DIR="dist"
-          mkdir -p "$OUT_DIR"
+          mkdir -p dist
 
           # APK splits
-          for apk in build/app/outputs/flutter-apk/*-$BUILD_TYPE.apk; do
-            ABI=$(basename "$apk" | sed "s/-$BUILD_TYPE.apk//" | sed 's/app-//')
-            cp "$apk" "$OUT_DIR/flutter-vpn-go-${SUFFIX}-${ABI}.apk"
+          for apk in build/app/outputs/flutter-apk/*-${BT}.apk; do
+            [ -f "$apk" ] || continue
+            ABI=$(basename "$apk" | sed "s/-${BT}.apk//" | sed 's/app-//')
+            cp "$apk" "dist/flutter-vpn-go-${SUFFIX}-${ABI}.apk"
           done
 
           # Universal APK
-          if [ -f "build/app/outputs/flutter-apk/app-$BUILD_TYPE.apk" ]; then
-            cp "build/app/outputs/flutter-apk/app-$BUILD_TYPE.apk" \
-               "$OUT_DIR/flutter-vpn-go-${SUFFIX}-universal.apk"
+          UNIV="build/app/outputs/flutter-apk/app-${BT}.apk"
+          if [ -f "$UNIV" ]; then
+            cp "$UNIV" "dist/flutter-vpn-go-${SUFFIX}-universal.apk"
+            echo "apk-universal=dist/flutter-vpn-go-${SUFFIX}-universal.apk" >> $GITHUB_OUTPUT
           fi
 
           # AAB
-          AAB_PATH="build/app/outputs/bundle/${BUILD_TYPE}/app-$BUILD_TYPE.aab"
-          if [ -f "$AAB_PATH" ]; then
-            cp "$AAB_PATH" "$OUT_DIR/flutter-vpn-go-${SUFFIX}.aab"
+          AAB="build/app/outputs/bundle/${BT}/app-${BT}.aab"
+          if [ -f "$AAB" ]; then
+            cp "$AAB" "dist/flutter-vpn-go-${SUFFIX}.aab"
+            echo "aab=dist/flutter-vpn-go-${SUFFIX}.aab" >> $GITHUB_OUTPUT
           fi
 
-          echo "Artifacts:"
-          ls -lh "$OUT_DIR/"
+          echo "=== dist/ ==="
+          ls -lh dist/
 
-          # Set outputs
-          APK_UNIVERSAL="$OUT_DIR/flutter-vpn-go-${SUFFIX}-universal.apk"
-          AAB="$OUT_DIR/flutter-vpn-go-${SUFFIX}.aab"
-          echo "apk=$APK_UNIVERSAL" >> $GITHUB_OUTPUT
-          echo "aab=$AAB" >> $GITHUB_OUTPUT
-          echo "dist_dir=flutter_vpn_go/$OUT_DIR" >> $GITHUB_OUTPUT
-
-      # ── Generate checksums ──────────────────────────────────────────────────
+      # ── Checksums ─────────────────────────────────────────────────────────
       - name: Generate checksums
-        working-directory: flutter_vpn_go/dist
-        run: |
-          sha256sum * > SHA256SUMS-android.txt
-          cat SHA256SUMS-android.txt
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS-android.txt && cat SHA256SUMS-android.txt
 
-      # ── Upload artifacts ────────────────────────────────────────────────────
+      # ── Upload ────────────────────────────────────────────────────────────
       - name: Upload Android artifacts
         if: ${{ inputs.upload-artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: android-${{ inputs.build-type }}
-          path: flutter_vpn_go/dist/
+          path: dist/
           retention-days: 30
           if-no-files-found: error
