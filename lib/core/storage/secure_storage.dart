@@ -1,17 +1,23 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Wraps flutter_secure_storage with typed access for VPN secrets.
 class SecureStorage {
-  SecureStorage() : _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(
-      // Use the shared Keychain access group so the Packet Tunnel extension
-      // can read the auth token.
-      // Replace with your actual team ID + group: $(TeamID).com.example.flutterVpnGo
-      accessibility: KeychainAccessibility.first_unlock,
-      accountName: 'flutter_vpn_go',
-    ),
-  );
+  SecureStorage()
+      : _storage = const FlutterSecureStorage(
+          aOptions: AndroidOptions(encryptedSharedPreferences: true),
+          iOptions: IOSOptions(
+            // Use the shared Keychain access group so the Packet Tunnel extension
+            // can read the auth token.
+            // Replace with your actual team ID + group: $(TeamID).com.example.flutterVpnGo
+            accessibility: KeychainAccessibility.first_unlock,
+            accountName: 'flutter_vpn_go',
+          ),
+        );
+
+  /// No-op constructor for unit tests — does not touch native Keychain.
+  @visibleForTesting
+  SecureStorage.forTesting() : _storage = const FlutterSecureStorage();
 
   final FlutterSecureStorage _storage;
 

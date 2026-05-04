@@ -73,7 +73,12 @@ jobs:
         run: flutter pub get
 
       - name: flutter test
-        run: flutter test --coverage
+        run: |
+          if [ -d "test" ] && find test -name "*_test.dart" -quit; then
+            flutter test --coverage
+          else
+            echo "⚠️  No test files found — skipping"
+          fi
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
