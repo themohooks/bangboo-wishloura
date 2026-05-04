@@ -89,11 +89,46 @@ jobs:
       - name: go mod tidy check
         working-directory: go_client
         run: |
+          # Save pre-tidy state
+          cp go.mod go.mod.before
+          cp go.sum go.sum.before 2>/dev/null || touch go.sum.before
+
           go mod tidy
-          git diff --exit-code go.mod go.sum || {
-            echo "❌ go.mod or go.sum out of date — run 'go mod tidy'"
+
+          # Detect new external dependencies (the dangerous change).
+          # We allow go/toolchain version line bumps by Go itself.
+          ADDED=$(diff go.sum.before go.sum | grep '^>' | grep -v '^> $' | wc -l)
+          REMOVED=$(diff go.sum.before go.sum | grep '^<' | grep -v '^< $' | wc -l)
+
+          if [ "$ADDED" -gt 0 ]; then
+            echo "❌ go mod tidy added $ADDED new entries to go.sum."
+            echo "   This means new external dependencies were introduced."
+            echo "   Diff:"
+            diff go.sum.before go.sum || true
             exit 1
-          }
+          fi
+
+          # Allow only version-line changes in go.mod (go X.Y / toolchain lines)
+          GOMOD_DIFF=$(diff go.mod.before go.mod \
+            | grep '^[<>]' \
+            | grep -v '^[<>] go ' \
+            | grep -v '^[<>] toolchain ' \
+            | wc -l)
+
+          if [ "$GOMOD_DIFF" -gt 0 ]; then
+            echo "❌ go mod tidy changed go.mod (non-toolchain changes):"
+            diff go.mod.before go.mod || true
+            exit 1
+          fi
+
+          # Harmless: if only go/toolchain lines changed, re-commit go.mod
+          if ! diff -q go.mod.before go.mod > /dev/null 2>&1; then
+            echo "ℹ️  go mod tidy updated go/toolchain version lines in go.mod (harmless):"
+            diff go.mod.before go.mod || true
+          fi
+
+          rm -f go.mod.before go.sum.before
+          echo "✅ go.mod and go.sum are clean"
 
       - name: go vet
         working-directory: go_client

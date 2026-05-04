@@ -1,0 +1,57 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+.metadata
+
+# Android generated
+android/.gradle/
+android/captures/
+android/local.properties
+android/key.properties
+android/app/release.jks
+android/app/*.jks
+android/app/*.keystore
+android/vpnplugin/libs/*.aar
+android/vpnplugin/libs/*.jar
+
+# iOS generated
+ios/.symlinks/
+ios/Flutter/flutter_export_environment.sh
+ios/Frameworks/GoClient.xcframework/
+ios/Pods/
+
+# Go — generated on-the-fly in CI, not committed
+go_client/cmd/
+
+# go.sum IS committed for reproducible builds — do NOT ignore it
+
+# Native libraries built by CI (committed only for development convenience)
+# Uncomment to also ignore jniLibs if building exclusively in CI:
+# android/vpnplugin/src/main/jniLibs/
+
+# Distribution output
+dist/
+dist-ios/
+release-assets/
+release-final/
+
+# IDE
+.idea/
+*.swp
+*.swo
+.vscode/
+
+# macOS
+.DS_Store
+
+# Coverage
+coverage/
+
+# Debug info from obfuscated builds
+build/debug-info/
