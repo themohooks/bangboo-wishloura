@@ -149,17 +149,24 @@ jobs:
         run: flutter pub get
 
       # ── Keystore setup ────────────────────────────────────────────────────
+      # NOTE: 'secrets' context cannot be used in 'if:' of reusable workflows.
+      # Check inside 'run:' via env vars instead.
       - name: Set up keystore
-        if: >
-          inputs.build-type == 'release' &&
-          secrets.KEYSTORE_BASE64 != ''
-        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/release.jks
-          cat > key.properties << EOF
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
+          if [ "${{ inputs.build-type }}" != "release" ] || [ -z "$KEYSTORE_B64" ]; then
+            echo "⚠️  No keystore configured — unsigned build"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 --decode > android/app/release.jks
+          cat > android/key.properties << EOF
+          storePassword=${KEYSTORE_PASS}
+          keyPassword=${KEY_PASS}
+          keyAlias=${KEY_ALIAS}
           storeFile=release.jks
           EOF
           echo "✅ Keystore configured"

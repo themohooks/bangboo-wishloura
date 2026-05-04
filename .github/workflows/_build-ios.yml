@@ -109,21 +109,25 @@ jobs:
         run: flutter pub get
 
       # ── iOS signing ───────────────────────────────────────────────────────
+      # NOTE: 'secrets' context cannot be used in 'if:' of reusable workflows.
+      # All secret checks happen inside 'run:' via env vars.
       - name: Set up iOS signing
-        if: >
-          ${{ inputs.build-type == 'release' &&
-              secrets.IOS_CERTIFICATE_BASE64 != '' &&
-              secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
         env:
           CERT_B64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
           CERT_PASS: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           PP_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           KC_PASS: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          if [ "${{ inputs.build-type }}" != "release" ] || \
+             [ -z "$CERT_B64" ] || [ -z "$PP_B64" ]; then
+            echo "⚠️  No signing secrets — will build unsigned"
+            exit 0
+          fi
           KC="$RUNNER_TEMP/build.keychain"
-          security create-keychain -p "$KC_PASS" "$KC"
+          KPASS="${KC_PASS:-random-$(date +%s)}"
+          security create-keychain -p "$KPASS" "$KC"
           security set-keychain-settings -lut 21600 "$KC"
-          security unlock-keychain -p "$KC_PASS" "$KC"
+          security unlock-keychain -p "$KPASS" "$KC"
 
           CERT="$RUNNER_TEMP/cert.p12"
           echo "$CERT_B64" | base64 --decode -o "$CERT"
@@ -137,26 +141,29 @@ jobs:
                  sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PP" "$HOME/Library/MobileDevice/Provisioning Profiles/${UUID}.mobileprovision"
-          echo "✅ Profile: $UUID"
+          # Signal that signing is ready
+          echo "IOS_SIGNING_READY=true" >> $GITHUB_ENV
+          echo "✅ Signing profile: $UUID"
 
       # ── Flutter build iOS ─────────────────────────────────────────────────
-      - name: Flutter build iOS (no codesign)
-        if: >
-          ${{ inputs.build-type == 'debug' ||
-              secrets.IOS_CERTIFICATE_BASE64 == '' }}
-        run: flutter build ios --${{ inputs.build-type }} --no-codesign
-
-      - name: Flutter build iOS (signed)
-        if: >
-          ${{ inputs.build-type == 'release' &&
-              secrets.IOS_CERTIFICATE_BASE64 != '' }}
+      - name: Flutter build iOS
+        env:
+          IOS_CERT_B64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
         run: |
-          flutter build ios --release \
-            --obfuscate --split-debug-info=build/debug-info
+          BT="${{ inputs.build-type }}"
+          if [ "$BT" = "release" ] && [ -n "$IOS_CERT_B64" ] && \
+             [ "${IOS_SIGNING_READY:-false}" = "true" ]; then
+            flutter build ios --release \
+              --obfuscate --split-debug-info=build/debug-info
+          else
+            flutter build ios --"$BT" --no-codesign
+          fi
 
       # ── Archive ───────────────────────────────────────────────────────────
       - name: xcodebuild archive
         working-directory: ios
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           VERSION=$(grep '^version:' ../pubspec.yaml | sed 's/version: //' | tr -d ' \r\n')
           BUILD_NUM=$(echo "$VERSION" | cut -d'+' -f2)
@@ -166,14 +173,15 @@ jobs:
           echo "ARCHIVE_PATH=$ARCHIVE" >> $GITHUB_ENV
 
           if [ "${{ inputs.build-type }}" = "release" ] && \
-             [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
+             [ -n "$IOS_TEAM_ID" ] && \
+             [ "${IOS_SIGNING_READY:-false}" = "true" ]; then
             xcodebuild archive \
               -workspace Runner.xcworkspace \
               -scheme Runner \
               -configuration Release \
               -archivePath "$ARCHIVE" \
               -destination "generic/platform=iOS" \
-              DEVELOPMENT_TEAM="${{ secrets.IOS_TEAM_ID }}" \
+              DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
               CURRENT_PROJECT_VERSION="$BUILD_NUM" \
               MARKETING_VERSION="$APP_VER" \
               CODE_SIGN_STYLE=Manual \
@@ -192,19 +200,22 @@ jobs:
 
       # ── Export IPA ────────────────────────────────────────────────────────
       - name: Export IPA
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           EXPORT="$RUNNER_TEMP/ipa-export"
           mkdir -p "$EXPORT"
           echo "EXPORT_PATH=$EXPORT" >> $GITHUB_ENV
 
           if [ "${{ inputs.build-type }}" = "release" ] && \
-             [ -n "${{ secrets.IOS_TEAM_ID }}" ]; then
-            cat > "$RUNNER_TEMP/ExportOptions.plist" << 'EOF'
+             [ -n "$IOS_TEAM_ID" ] && \
+             [ "${IOS_SIGNING_READY:-false}" = "true" ]; then
+            cat > "$RUNNER_TEMP/ExportOptions.plist" << EOF
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0"><dict>
               <key>method</key><string>ad-hoc</string>
-              <key>teamID</key><string>${{ secrets.IOS_TEAM_ID }}</string>
+              <key>teamID</key><string>${IOS_TEAM_ID}</string>
               <key>compileBitcode</key><false/>
             </dict></plist>
             EOF
