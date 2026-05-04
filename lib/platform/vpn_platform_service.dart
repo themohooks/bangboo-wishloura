@@ -169,6 +169,20 @@ class VpnPlatformService {
   Future<void> sendProviderMessage(String type, Map<String, Object?> payload) =>
       _host.sendProviderMessage(type, payload);
 
+  // ── App exclusions ────────────────────────────────────────────────────────
+
+  Future<List<AppInfoDto>> getInstalledApps() async {
+    try {
+      final list = await _host.getInstalledApps();
+      return list.whereType<AppInfoDto>().toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> setExcludedApps(List<String> packages, {bool isWhitelist = false}) =>
+      _host.setExcludedApps(packages, isWhitelist);
+
   // ── Converters ───────────────────────────────────────────────────────────
 
   static TunnelStatusState _dtoToStatus(TunnelStatusDto dto) => TunnelStatusState(

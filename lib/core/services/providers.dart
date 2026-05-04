@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/app_info.dart';
 import '../models/log_entry.dart';
 import '../models/traffic_stats.dart';
 import '../models/tunnel_config.dart';
@@ -87,4 +88,40 @@ final filteredLogEntriesProvider = Provider<List<LogEntry>>((ref) {
   final minLevel = ref.watch(logLevelFilterProvider);
   final minOrder = minLevel.levelOrder;
   return entries.where((e) => e.level.levelOrder >= minOrder).toList();
+});
+
+// ── App exclusions (split tunnel) ─────────────────────────────────────────
+
+/// Async provider that loads the installed apps list from native (Android only).
+final installedAppsProvider = FutureProvider<List<AppInfo>>((ref) async {
+  final platform = ref.watch(vpnPlatformServiceProvider);
+  try {
+    final dtos = await platform.getInstalledApps();
+    return dtos.map((d) => AppInfo(
+      packageName: d.packageName,
+      label: d.label,
+      iconBase64: d.iconBase64,
+      isExcluded: d.isExcluded,
+      isWhitelist: d.isWhitelist,
+    )).toList();
+  } catch (_) {
+    return [];
+  }
+});
+
+/// Search query for app exclusions screen
+final appSearchQueryProvider = StateProvider<String>((ref) => '');
+
+/// Whitelist mode toggle
+final appExclusionIsWhitelistProvider = StateProvider<bool>((ref) => false);
+
+/// Filtered + searched apps list
+final filteredAppsProvider = Provider<List<AppInfo>>((ref) {
+  final apps = ref.watch(installedAppsProvider).valueOrNull ?? [];
+  final query = ref.watch(appSearchQueryProvider).toLowerCase();
+  if (query.isEmpty) return apps;
+  return apps.where((a) =>
+    a.label.toLowerCase().contains(query) ||
+    a.packageName.toLowerCase().contains(query),
+  ).toList();
 });

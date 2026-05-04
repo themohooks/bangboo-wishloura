@@ -43,7 +43,39 @@ xcode-select --install
 
 ---
 
-## Build Android AAR
+## Build Android (ELF binary — recommended)
+
+Android uses the **ProcessBuilder** model (same as proxy-turn-vk-android).
+The Go client is compiled as an ELF executable with `.so` extension and
+placed in `jniLibs/`. Android extracts it to `nativeLibraryDir` on install.
+
+```bash
+cd flutter_vpn_go/go_client
+chmod +x build_android_so.sh
+./build_android_so.sh
+```
+
+Output: `android/vpnplugin/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/libclient.so`
+
+**Prerequisites**: Android NDK (set `ANDROID_NDK_HOME`), Go 1.21+
+
+Manual commands for each ABI:
+```bash
+# arm64 (most modern devices)
+CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
+  CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang \
+  go build -trimpath -ldflags="-s -w" \
+  -o ../android/vpnplugin/src/main/jniLibs/arm64-v8a/libclient.so \
+  ./cmd/android
+```
+
+> **Note**: `android/vpnplugin/src/main/AndroidManifest.xml` must have
+> `android:extractNativeLibs="true"` in the `<application>` tag.
+
+## Build Android AAR (gomobile fallback, optional)
+
+Only needed if you want to use the gomobile in-process approach for Android
+(e.g., for custom transports that need JNI callbacks).
 
 ```bash
 cd flutter_vpn_go/go_client
@@ -51,15 +83,6 @@ cd flutter_vpn_go/go_client
 ```
 
 Output: `android/vpnplugin/libs/goclient.aar`
-
-Manual command:
-```bash
-gomobile bind \
-  -target=android \
-  -androidapi 26 \
-  -o ../android/vpnplugin/libs/goclient.aar \
-  ./client
-```
 
 ---
 

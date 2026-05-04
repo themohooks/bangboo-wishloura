@@ -157,6 +157,26 @@ class DiagnosticsDto {
 }
 
 // ─────────────────────────────────────────────
+// AppInfoDto (app exclusions / split tunnel)
+// ─────────────────────────────────────────────
+
+class AppInfoDto {
+  AppInfoDto({
+    required this.packageName,
+    required this.label,
+    required this.iconBase64,
+    required this.isExcluded,
+    required this.isWhitelist,
+  });
+
+  final String packageName;
+  final String label;
+  final String iconBase64;
+  final bool isExcluded;
+  final bool isWhitelist;
+}
+
+// ─────────────────────────────────────────────
 // Flutter → Native host API
 // ─────────────────────────────────────────────
 
@@ -202,6 +222,15 @@ abstract class VpnHostApi {
   /// Sends an arbitrary message to the PacketTunnel extension (iOS IPC).
   @async
   void sendProviderMessage(String type, Map<String, Object?> payload);
+
+  /// Returns list of installed apps with their exclusion state.
+  /// Android only — returns empty list on iOS.
+  @async
+  List<AppInfoDto> getInstalledApps();
+
+  /// Persists the exclusion set and reloads the WireGuard tunnel if running.
+  @async
+  void setExcludedApps(List<String> packages, bool isWhitelist);
 }
 
 // ─────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'features/app_exclusions/app_exclusions_screen.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/diagnostics/diagnostics_screen.dart';
 import 'features/import_config/import_config_screen.dart';
@@ -139,6 +140,7 @@ class _MainShellState extends State<MainShell> {
   static const _pages = [
     DashboardScreen(),
     SettingsScreen(),
+    AppExclusionsScreen(),
     LogsScreen(),
     ImportConfigScreen(),
     DiagnosticsScreen(),
@@ -166,6 +168,11 @@ class _MainShellState extends State<MainShell> {
             label: 'Settings',
           ),
           NavigationDestination(
+            icon: Icon(Icons.apps_outlined),
+            selectedIcon: Icon(Icons.apps),
+            label: 'Exclusions',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.list_outlined),
             selectedIcon: Icon(Icons.list),
             label: 'Logs',
@@ -178,7 +185,7 @@ class _MainShellState extends State<MainShell> {
           NavigationDestination(
             icon: Icon(Icons.info_outline),
             selectedIcon: Icon(Icons.info),
-            label: 'Diagnostics',
+            label: 'Info',
           ),
         ],
       ),

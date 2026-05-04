@@ -1,0 +1,51 @@
+# Dependabot configuration
+# Automatically creates PRs for dependency updates
+
+version: 2
+
+updates:
+  # Flutter/Dart dependencies (pubspec.yaml)
+  - package-ecosystem: pub
+    directory: "/flutter_vpn_go"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - flutter
+    commit-message:
+      prefix: "deps(flutter)"
+    ignore:
+      # Pin major versions — review manually
+      - dependency-name: "flutter_riverpod"
+        update-types: ["version-update:semver-major"]
+
+  # Go dependencies
+  - package-ecosystem: gomod
+    directory: "/flutter_vpn_go/go_client"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: "deps(go)"
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci(deps)"

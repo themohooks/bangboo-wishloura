@@ -274,6 +274,41 @@ class DiagnosticsDto {
 }
 
 // ─────────────────────────────────────────────
+// AppInfoDto (app exclusions / split tunnel)
+// ─────────────────────────────────────────────
+
+class AppInfoDto {
+  AppInfoDto({
+    required this.packageName,
+    required this.label,
+    required this.iconBase64,
+    required this.isExcluded,
+    required this.isWhitelist,
+  });
+
+  String packageName;
+  String label;
+  String iconBase64;
+  bool isExcluded;
+  bool isWhitelist;
+
+  Object encode() {
+    return <Object?>[packageName, label, iconBase64, isExcluded, isWhitelist];
+  }
+
+  static AppInfoDto decode(Object result) {
+    result as List<Object?>;
+    return AppInfoDto(
+      packageName: result[0]! as String,
+      label:       result[1]! as String,
+      iconBase64:  result[2]! as String,
+      isExcluded:  result[3]! as bool,
+      isWhitelist: result[4]! as bool,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
 // Pigeon codec
 // ─────────────────────────────────────────────
 
@@ -297,6 +332,9 @@ class _VpnApiCodec extends StandardMessageCodec {
     } else if (value is DiagnosticsDto) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
+    } else if (value is AppInfoDto) {
+      buffer.putUint8(133);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -315,6 +353,8 @@ class _VpnApiCodec extends StandardMessageCodec {
         return LogEntryDto.decode(readValue(buffer)!);
       case 132:
         return DiagnosticsDto.decode(readValue(buffer)!);
+      case 133:
+        return AppInfoDto.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -421,6 +461,26 @@ class VpnHostApi {
     final String channelName = 'dev.flutter.pigeon.flutter_vpn_go.VpnHostApi.sendProviderMessage$_messageChannelSuffix';
     final BasicMessageChannel<Object?> channel = BasicMessageChannel<Object?>(channelName, codec, binaryMessenger: _binaryMessenger);
     final List<Object?>? replyList = await channel.send(<Object?>[type, payload]) as List<Object?>?;
+    if (replyList == null) throw PlatformException(code: 'channel-error', message: 'Unable to establish connection on channel.');
+    if (replyList.length > 1) throw PlatformException(code: replyList[0]! as String, message: replyList[1] as String?, details: replyList[2]);
+  }
+
+  /// Returns list of installed apps with their current exclusion status.
+  /// Android only — returns empty list on iOS.
+  Future<List<AppInfoDto?>> getInstalledApps() async {
+    final String channelName = 'dev.flutter.pigeon.flutter_vpn_go.VpnHostApi.getInstalledApps$_messageChannelSuffix';
+    final BasicMessageChannel<Object?> channel = BasicMessageChannel<Object?>(channelName, codec, binaryMessenger: _binaryMessenger);
+    final List<Object?>? replyList = await channel.send(null) as List<Object?>?;
+    if (replyList == null) throw PlatformException(code: 'channel-error', message: 'Unable to establish connection on channel.');
+    if (replyList.length > 1) throw PlatformException(code: replyList[0]! as String, message: replyList[1] as String?, details: replyList[2]);
+    return (replyList[0] as List<Object?>?)!.cast<AppInfoDto?>();
+  }
+
+  /// Saves the excluded app list and optionally reloads the WireGuard tunnel.
+  Future<void> setExcludedApps(List<String?> packages, bool isWhitelist) async {
+    final String channelName = 'dev.flutter.pigeon.flutter_vpn_go.VpnHostApi.setExcludedApps$_messageChannelSuffix';
+    final BasicMessageChannel<Object?> channel = BasicMessageChannel<Object?>(channelName, codec, binaryMessenger: _binaryMessenger);
+    final List<Object?>? replyList = await channel.send(<Object?>[packages, isWhitelist]) as List<Object?>?;
     if (replyList == null) throw PlatformException(code: 'channel-error', message: 'Unable to establish connection on channel.');
     if (replyList.length > 1) throw PlatformException(code: replyList[0]! as String, message: replyList[1] as String?, details: replyList[2]);
   }
