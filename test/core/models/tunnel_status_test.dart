@@ -29,6 +29,7 @@ void main() {
         expect(TunnelStatus.preparing.isActive, isFalse);
         expect(TunnelStatus.disconnecting.isActive, isFalse);
         expect(TunnelStatus.failed.isActive, isFalse);
+      });
     });
 
     group('canConnect', () {
