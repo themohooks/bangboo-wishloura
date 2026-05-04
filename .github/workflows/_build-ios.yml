@@ -254,7 +254,7 @@ jobs:
       # ── Upload ────────────────────────────────────────────────────────────
       - name: Upload iOS artifacts
         if: ${{ inputs.upload-artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-${{ inputs.build-type }}
           path: dist-ios/
