@@ -1,0 +1,56 @@
+name: flutter_vpn_go
+description: Cross-platform VPN/proxy app with Flutter UI, Go core, and native VPN layers.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Secure storage
+  flutter_secure_storage: ^9.0.0
+
+  # JSON & serialization
+  json_annotation: ^4.8.1
+  freezed_annotation: ^2.4.1
+
+  # File & path
+  path_provider: ^2.1.2
+  file_picker: ^8.0.3
+
+  # UUID
+  uuid: ^4.3.3
+
+  # Device info
+  device_info_plus: ^10.1.0
+  package_info_plus: ^8.0.0
+
+  # Clipboard
+  flutter_clipboard_manager: ^0.0.2
+
+  # Intl / formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+  # Code generation
+  build_runner: ^2.4.8
+  json_serializable: ^6.7.1
+  freezed: ^2.4.6
+  riverpod_generator: ^2.3.9
+
+  # Pigeon for type-safe platform channels
+  pigeon: ^18.0.0
+
+flutter:
+  uses-material-design: true

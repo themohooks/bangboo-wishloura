@@ -1,0 +1,2 @@
+# Place GoClient.xcframework here after running go_client/build_ios.sh
+# The framework is not committed to version control.

@@ -1,0 +1,2 @@
+# Place goclient.aar here after running go_client/build_android.sh
+# The .aar file is not committed to version control.

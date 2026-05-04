@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ── Required permissions ──────────────────────────────────────────── -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- VpnService + foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- WakeLock: keep CPU alive in Doze mode (critical for VPN) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- WifiLock: prevent Wi-Fi radio sleep -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!-- NetworkCallback: detect active networks -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Battery: prompt user to disable battery optimization for VPN -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Notifications (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- App exclusions: enumerate installed packages -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!-- ── Components ────────────────────────────────────────────────────── -->
+
+    <application
+        android:extractNativeLibs="true">
+        <!--
+            extractNativeLibs="true" is REQUIRED so that libclient.so
+            (the Go ELF binary) is extracted to nativeLibraryDir on install.
+            Without this, ProcessBuilder cannot find the binary.
+        -->
+
+        <!--
+            AndroidVpnService:
+            - BIND_VPN_SERVICE permission required for VpnService
+            - android.net.VpnService intent-filter required by system
+            - foregroundServiceType=specialUse required on Android 14+
+        -->
+        <service
+            android:name=".AndroidVpnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:stopWithTask="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="VPN tunnel to user-owned server" />
+        </service>
+
+    </application>
+
+</manifest>
