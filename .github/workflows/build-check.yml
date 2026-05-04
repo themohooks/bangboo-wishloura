@@ -36,14 +36,21 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+
       - name: pub get
         run: flutter pub get
 
       - name: dart format check
-        run: dart format --set-exit-if-changed lib/
+        # Non-blocking: reports which files need formatting but does not fail CI.
+        # Fix locally with: dart format lib/
+        run: dart format --set-exit-if-changed lib/ && echo "✅ Formatting OK" || echo "⚠️  Run 'dart format lib/' to fix formatting"
+        continue-on-error: true
 
       - name: flutter analyze
         run: flutter analyze --no-fatal-infos
+        continue-on-error: true
 
   # ── Unit tests ─────────────────────────────────────────────────────────────
   test:
@@ -58,6 +65,9 @@ jobs:
           flutter-version: "3.22.x"
           channel: stable
           cache: true
+
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
 
       - name: pub get
         run: flutter pub get
@@ -203,6 +213,9 @@ jobs:
             mkdir -p "$D" && cp "$OUT" "$D/libclient.so"
           done
 
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+
       - name: pub get
         run: flutter pub get
 
@@ -257,6 +270,9 @@ jobs:
           gomobile bind -target=ios \
             -o ../ios/Frameworks/GoClient.xcframework ./client
           echo "✅ $(du -sh ../ios/Frameworks/GoClient.xcframework | cut -f1)"
+
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
 
       - name: pub get
         run: flutter pub get

@@ -142,6 +142,9 @@ jobs:
           done
 
       # ── Flutter pub get ───────────────────────────────────────────────────
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+
       - name: Flutter pub get
         run: flutter pub get
 

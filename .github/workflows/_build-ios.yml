@@ -102,6 +102,9 @@ jobs:
           echo "✅ XCFramework: $(du -sh ../ios/Frameworks/GoClient.xcframework | cut -f1)"
 
       # ── Flutter pub get ───────────────────────────────────────────────────
+      - name: Disable Flutter analytics
+        run: flutter config --no-analytics
+
       - name: Flutter pub get
         run: flutter pub get
 
